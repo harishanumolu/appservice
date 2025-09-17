@@ -1,0 +1,71 @@
+name: DEPLOY SERVICE
+run-name: DEPLOY SERVICE to Web App ${{ inputs.environment }} (from ${{ inputs.branch }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        type: choice
+        required: true
+        options: [DEV, 04, PE, UAT, PROD]
+      branch:
+        description: "Branch to deploy from"
+        required: true
+        default: "main"
+      use_latest_success_on_branch:
+        description: "Use latest successful build from the selected branch?"
+        type: boolean
+        default: true
+      build_run_id:
+        description: "Exact Run ID of BUILD SERVICE (used only if 'use_latest_success_on_branch' is false)"
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      ARTIFACT_NAME: service
+      # IMPORTANT: use the actual FILENAME of your build workflow:
+      # e.g. '.github/workflows/build-service.yml' or 'build-service.yml'
+      BUILD_WORKFLOW_FILE: build-service.yml
+
+    steps:
+      - name: Show inputs
+        run: |
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Branch:      ${{ inputs.branch }}"
+          echo "Use latest:  ${{ inputs.use_latest_success_on_branch }}"
+          echo "Run ID:      ${{ inputs.build_run_id }}"
+
+      - name: Download artifact (latest successful on branch)
+        if: inputs.use_latest_success_on_branch == true
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_FILE }}
+          workflow_conclusion: success
+          branch: ${{ inputs.branch }}
+          name: ${{ env.ARTIFACT_NAME }}
+
+      - name: Download artifact by run-id
+        if: inputs.use_latest_success_on_branch != true
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          run_id: ${{ inputs.build_run_id }}
+          name: ${{ env.ARTIFACT_NAME }}
+
+      - name: Verify artifact and unzip
+        run: |
+          test -f service.zip || { echo "service.zip not found in artifact"; exit 1; }
+          unzip -q service.zip -d package
+          echo "Contents of package/:"
+          ls -la package
+
+      - name: Deploy to Azure Web App (Publish Profile)
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}                 # set per-environment variable
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}  # set per-environment secret (XML)
+          package: package
